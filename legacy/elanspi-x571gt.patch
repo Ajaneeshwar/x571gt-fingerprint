@@ -1,0 +1,103 @@
+diff --git i/libfprint/drivers/elanspi.c w/libfprint/drivers/elanspi.c
+index c2e3cbc..33bd1c0 100644
+--- i/libfprint/drivers/elanspi.c
++++ w/libfprint/drivers/elanspi.c
+@@ -1330,6 +1330,56 @@ elanspi_fp_assembling_get_pixel (struct fpi_frame_asmbl_ctx *ctx, struct fpi_fra
+   return frame->data[y * ctx->frame_width + x];
+ }
+ 
++/* Unsharp mask (gaussian sigma 2, amount 1.5): the eFSA80SC's stitched
++ * image is too soft after the 2x resize for NBIS minutiae detection
++ * (single-digit counts, bz3 scores of 0); sharpening restores ridge
++ * contrast and roughly doubles the minutiae count. */
++static void
++elanspi_sharpen_image (FpImage *img)
++{
++  /* 1D gaussian kernel, sigma=2, radius=4, fixed-point (sum 65536) */
++  static const guint32 kern[9] = {1852, 5406, 12141, 20983, 27932,
++                                  20983, 12141, 5406, 1852};
++  gint w = img->width, h = img->height;
++  g_autofree guint8 *tmp = g_malloc (w * h);
++  g_autofree guint8 *blur = g_malloc (w * h);
++  gint x, y, i;
++
++  for (y = 0; y < h; y++)
++    for (x = 0; x < w; x++)
++      {
++        guint64 acc = 0, norm = 0;
++        for (i = -4; i <= 4; i++)
++          {
++            gint xi = x + i;
++            if (xi < 0 || xi >= w)
++              continue;
++            acc += (guint64) img->data[y * w + xi] * kern[i + 4];
++            norm += kern[i + 4];
++          }
++        tmp[y * w + x] = acc / norm;
++      }
++  for (y = 0; y < h; y++)
++    for (x = 0; x < w; x++)
++      {
++        guint64 acc = 0, norm = 0;
++        for (i = -4; i <= 4; i++)
++          {
++            gint yi = y + i;
++            if (yi < 0 || yi >= h)
++              continue;
++            acc += (guint64) tmp[yi * w + x] * kern[i + 4];
++            norm += kern[i + 4];
++          }
++        blur[y * w + x] = acc / norm;
++      }
++  for (i = 0; i < w * h; i++)
++    {
++      gint v = img->data[i] + (3 * (img->data[i] - blur[i])) / 2;
++      img->data[i] = CLAMP (v, 0, 255);
++    }
++}
++
+ static void
+ elanspi_fp_frame_stitch_and_submit (FpiDeviceElanSpi *self)
+ {
+@@ -1348,8 +1398,16 @@ elanspi_fp_frame_stitch_and_submit (FpiDeviceElanSpi *self)
+   GSList *frame_start = g_slist_nth (self->fp_frame_list, ELANSPI_SWIPE_FRAMES_DISCARD);
+ 
+   fpi_do_movement_estimation (&assembling_ctx, frame_start);
++  /* The finger only travels along one axis during a swipe; the sideways
++   * deltas the movement estimator produces on these square 80x80 frames
++   * are noise that accumulates into a per-swipe shear (with jagged seams
++   * that read as fake minutiae), making genuine bz3 matches score 0.
++   * Clamp the horizontal displacement to zero. */
++  for (GSList *l = frame_start; l; l = l->next)
++    ((struct fpi_frame *) l->data)->delta_x = 0;
+   img = fpi_assemble_frames (&assembling_ctx, frame_start);
+   scaled = fpi_image_resize (img, 2, 2);
++  elanspi_sharpen_image (scaled);
+ 
+   scaled->flags |= FPI_IMAGE_PARTIAL | FPI_IMAGE_COLORS_INVERTED;
+ 
+diff --git i/libfprint/drivers/elanspi.h w/libfprint/drivers/elanspi.h
+index 688f477..82e2ce5 100644
+--- i/libfprint/drivers/elanspi.h
++++ w/libfprint/drivers/elanspi.h
+@@ -340,6 +340,7 @@ static const struct elanspi_regtable elanspi_calibration_table_new_page1 = {
+ 
+ // using checkargs ACPI:HIDPID
+ static const FpIdEntry elanspi_id_table[] = {
++  {.udev_types = ELANSPI_UDEV_TYPES, .spi_acpi_id = "ELAN7001", .hid_id = {.vid = ELANSPI_TP_VID, .pid = 0x3104}, .driver_data = ELANSPI_90RIGHT_ROTATE},
+   {.udev_types = ELANSPI_UDEV_TYPES, .spi_acpi_id = "ELAN7001", .hid_id = {.vid = ELANSPI_TP_VID, .pid = 0x2766}, .driver_data = ELANSPI_NO_ROTATE},
+   {.udev_types = ELANSPI_UDEV_TYPES, .spi_acpi_id = "ELAN7001", .hid_id = {.vid = ELANSPI_TP_VID, .pid = 0x3057}, .driver_data = ELANSPI_180_ROTATE},
+   {.udev_types = ELANSPI_UDEV_TYPES, .spi_acpi_id = "ELAN7001", .hid_id = {.vid = ELANSPI_TP_VID, .pid = 0x3087}, .driver_data = ELANSPI_180_ROTATE},
+diff --git i/tests/meson.build w/tests/meson.build
+index aad0675..32c7685 100644
+--- i/tests/meson.build
++++ w/tests/meson.build
+@@ -292,7 +292,7 @@ else
+         args: ['-c', 'exit 77']
+     )
+ 
+-    foreach driver_test: drivers_tests
++    foreach driver_test, _unused: drivers_tests
+         test(driver_test,
+             sh,
+             args: ['-c', 'exit 77']

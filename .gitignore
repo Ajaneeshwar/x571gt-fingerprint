@@ -1,0 +1,13 @@
+# full libfprint working tree (rebuild: clone sigfm branch + apply-sigfm-changes.py)
+libfprint-sigfm/
+
+# makepkg build artifacts
+pkg-sigfm/src/
+pkg-sigfm/pkg/
+pkg-sigfm/libfprint/
+*-debug-*.pkg.tar.zst
+
+# test/debug leftovers — never commit fingerprint data
+*.pgm
+*.log
+test-storage.variant

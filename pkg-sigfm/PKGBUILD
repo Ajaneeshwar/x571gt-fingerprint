@@ -1,0 +1,57 @@
+# libfprint with SIGFM (SIFT) matching + press-mode ELAN7001 SPI (eFSA80SC)
+# for the ASUS VivoBook X571GT (touchpad PID 04f3:3104).
+# Source: goodix-fp-linux-dev's sigfm branch (libfprint 1.94.5 base) plus
+# sigfm-x571gt.patch. pkgver is declared 1.94.100 so the repo's 1.94.100-1
+# does not replace this on -Syu (the lib API/soname are identical).
+
+pkgname=libfprint
+pkgver=1.94.100
+pkgrel=2
+pkgdesc="Library for fingerprint readers (SIGFM matcher; X571GT ELAN SPI press mode)"
+url="https://fprint.freedesktop.org/"
+arch=(x86_64)
+license=(LGPL-2.1-or-later)
+depends=(
+  libgcc
+  glib2
+  glibc
+  libgudev
+  libgusb
+  openssl
+  pixman
+  opencv
+)
+makedepends=(
+  git
+  glib2-devel
+  meson
+  python-cairo
+  python-gobject
+  systemd
+)
+provides=(libfprint-2.so)
+groups=(fprint)
+source=("git+https://github.com/goodix-fp-linux-dev/libfprint.git#branch=sigfm"
+        sigfm-x571gt.patch)
+b2sums=('SKIP' 'SKIP')
+
+prepare() {
+  cd $pkgname
+  patch -p1 < ../sigfm-x571gt.patch
+}
+
+build() {
+  local meson_options=(
+    -D drivers=all
+    -D introspection=false
+    -D doc=false
+    -D gtk-examples=false
+  )
+
+  arch-meson $pkgname build "${meson_options[@]}"
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+}
