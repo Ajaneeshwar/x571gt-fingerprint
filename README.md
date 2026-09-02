@@ -23,6 +23,9 @@ The X571GT's reader is invisible to `lsusb`, which makes most guides conclude
 | Device nodes | `/dev/spidev1.0` + `/dev/hidraw0` |
 
 Other laptops with the same die: ASUS VivoBook S13 S330FA, ExpertBook P2451FA.
+If you landed here searching for `ELAN7001`, `elanspi`, `04f3:3104`,
+`fprintd` "no devices available", or `lsusb` showing no fingerprint reader
+on a VivoBook/ExpertBook: this is the same problem, and this repo fixes it.
 
 ## The three problems (and fixes)
 
@@ -166,6 +169,39 @@ legacy/                    the earlier NBIS-era patch (working capture, failed m
   was calibrated on one device to reject clear impostors, but a tiny sensor
   is inherently weaker than a full-size reader. Treat it as a convenience
   unlock, and keep a strong password.
+
+## FAQ
+
+### Why does the power-on prompt still want my password? Can't the fingerprint unlock the laptop from boot?
+
+No, and it can't by design. The password you type when turning on the laptop
+is not your login password, it is the **disk decryption key**. The whole disk
+is LUKS-encrypted (the prompt says `omarchy_root`), and at that moment Linux
+itself is still locked inside the encrypted disk. Step by step:
+
+1. What runs at power-on is a tiny pre-boot environment (the initramfs)
+   whose only job is to ask for the key and unlock the disk.
+2. Everything fingerprint-related lives *inside* the encrypted disk:
+   `fprintd`, this patched `libfprint` (and its OpenCV/SIGFM dependency),
+   and your enrollment template. Chicken and egg: the fingerprint stack can
+   only run once the disk is unlocked, and unlocking the disk needs the key
+   first.
+3. Even the sensor's drivers are not loaded at that stage: no touchpad HID,
+   no `elanspi`, nothing that can talk to the reader yet.
+
+So the finger covers everything *after* unlock: the lock screen, `sudo`, and
+polkit. Type the disk password once at power-on; from login onward, the
+fingerprint takes over.
+
+Could this be made to work at boot someday? Other setups drive USB readers
+from the initramfs before unlock, but this sensor would need the whole
+libfprint + OpenCV + SIGFM stack and a calibration routine shipped inside
+the initramfs, plus a copy of the fingerprint template stored in the
+*unencrypted* boot partition, where anyone with the laptop could swap or
+bypass it. That trades away most of what disk encryption buys you, and a
+fingerprint is not a revocable key: you cannot change your finger the way
+you change a leaked password. Keep a strong disk password, and treat the
+fingerprint as the fast path for everything after boot.
 
 ## Credits
 
