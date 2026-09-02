@@ -203,6 +203,36 @@ fingerprint is not a revocable key: you cannot change your finger the way
 you change a leaked password. Keep a strong disk password, and treat the
 fingerprint as the fast path for everything after boot.
 
+### Does this work on my laptop? My fingerprint reader is also in the touchpad.
+
+It depends on *how* the sensor is wired, not on the touchpad placement.
+There are two families of Elan touchpad-embedded readers:
+
+- **USB readers** (`elanmoc`): visible in `lsusb`, already supported by
+  mainline libfprint. You do not need this repo.
+- **SPI readers** (this repo): invisible to `lsusb`, ACPI device `ELAN7001`.
+
+A 30-second self-check:
+
+```bash
+ls /sys/bus/spi/devices/        # looking for a spi-ELAN... node
+lsusb | grep 04f3               # the companion touchpad PID
+```
+
+If you have an ELAN SPI node, the fixes apply to you layer by layer:
+
+| Fix | Scope |
+|---|---|
+| `spidev bufsiz` | any laptop with an Elan SPI sensor, any model |
+| `04f3:3104` id-table entry | model-specific; a different touchpad PID needs its own line in `drivers/elanspi.h` |
+| press-mode + SIGFM capture | specific to the `eFSA80SC` die; other Elan SPI dies need the capture path ported (frame size, tone mapping, die id) |
+
+Same die, other laptop: works, possibly after adding your touchpad PID.
+Different Elan SPI die: the architecture (press mode + SIGFM instead of
+swipe stitching + bozorth3) should carry over, but the capture path needs
+adapting. Open an issue with `dmesg` output; these sensors speak a similar
+protocol.
+
 ## Credits
 
 - [mincrmatt12/elan-spi-fingerprint](https://github.com/mincrmatt12/elan-spi-fingerprint):
